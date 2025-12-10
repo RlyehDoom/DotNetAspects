@@ -1,0 +1,17 @@
+<Project>
+  <!-- Auto-generate FodyWeavers.xml if it doesn't exist -->
+  <Target Name="EnsureFodyWeaversXml" BeforeTargets="FodyTarget" Condition="!Exists('$(MSBuildProjectDirectory)\FodyWeavers.xml')">
+    <PropertyGroup>
+      <FodyWeaversContent><![CDATA[<?xml version="1.0" encoding="utf-8"?>
+<Weavers xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FodyWeavers.xsd">
+  <DotNetAspects />
+</Weavers>
+]]></FodyWeaversContent>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(MSBuildProjectDirectory)\FodyWeavers.xml"
+                      Lines="$(FodyWeaversContent)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+    <Message Importance="high" Text="DotNetAspects: Generated FodyWeavers.xml" />
+  </Target>
+</Project>

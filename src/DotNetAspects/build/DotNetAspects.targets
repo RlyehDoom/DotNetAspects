@@ -1,0 +1,3 @@
+<Project>
+  <!-- DotNetAspects uses WeaverConfiguration property - no FodyWeavers.xml needed -->
+</Project>

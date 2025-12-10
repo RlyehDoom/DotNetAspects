@@ -1,0 +1,6 @@
+<Project>
+  <!-- Register DotNetAspects weaver with Fody -->
+  <ItemGroup>
+    <WeaverFiles Include="$(MSBuildThisFileDirectory)..\weaver\DotNetAspects.Fody.dll" />
+  </ItemGroup>
+</Project>

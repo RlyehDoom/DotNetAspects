@@ -1,0 +1,15 @@
+<Project>
+  <!-- Register DotNetAspects weaver with Fody -->
+  <ItemGroup>
+    <WeaverFiles Include="$(MSBuildThisFileDirectory)..\weaver\netstandard2.0\DotNetAspects.Fody.dll" />
+  </ItemGroup>
+
+  <!-- Configure Fody to use in-memory configuration (no FodyWeavers.xml needed) -->
+  <PropertyGroup>
+    <WeaverConfiguration Condition="'$(WeaverConfiguration)' == ''">
+      <Weavers>
+        <DotNetAspects />
+      </Weavers>
+    </WeaverConfiguration>
+  </PropertyGroup>
+</Project>

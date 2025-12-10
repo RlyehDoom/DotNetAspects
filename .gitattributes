@@ -1,0 +1,41 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Shell scripts must use LF line endings for Linux/Unix compatibility
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Batch files should use CRLF for Windows
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Source code files
+*.cs text diff=csharp
+*.csproj text
+*.sln text
+*.props text
+*.targets text
+
+# Configuration files
+*.json text
+*.xml text
+*.yml text
+*.yaml text
+*.config text
+
+# Documentation
+*.md text diff=markdown
+*.txt text
+
+# Keep binary files as-is
+*.dll binary
+*.exe binary
+*.pdb binary
+*.nupkg binary
+*.snk binary
+*.pfx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

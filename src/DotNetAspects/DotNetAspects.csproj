@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DotNetAspects</RootNamespace>
+    <AssemblyName>DotNetAspects</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- NuGet Package -->
+    <PackageId>DotNetAspects</PackageId>
+    <Version>1.3.2</Version>
+    <Authors>Jose Luis Y.R</Authors>
+    <Company>RlyehDoom</Company>
+    <Description>Lightweight AOP (Aspect-Oriented Programming) library with PostSharp-compatible API. Supports method interception, boundary aspects, and property interception with compile-time IL weaving via Fody. Single package includes both library and Fody weaver.</Description>
+    <PackageTags>AOP;Aspects;PostSharp;Interception;Weaving;Fody;MethodInterception</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/RlyehDoom/DotNetAspects</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/RlyehDoom/DotNetAspects</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) 2025 Jose Luis Y.R</Copyright>
+
+    <!-- Strong Name Signing -->
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>..\..\DotNetAspects.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.7.0" />
+  </ItemGroup>
+
+  <!-- Fody dependency - passed to consumers, disabled for this project -->
+  <PropertyGroup>
+    <DisableFody>true</DisableFody>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Fody" Version="6.8.2" PrivateAssets="none" />
+  </ItemGroup>
+
+  <!-- Include README, build props/targets, and weaver in package -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="build\**\*" Pack="true" PackagePath="build\" />
+    <None Include="..\DotNetAspects.Fody\bin\$(Configuration)\netstandard2.0\DotNetAspects.Fody.dll" Pack="true" PackagePath="weaver\netstandard2.0\" Visible="false" />
+  </ItemGroup>
+
+</Project>
