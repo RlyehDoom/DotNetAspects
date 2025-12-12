@@ -1015,20 +1015,22 @@ namespace DotNetAspects.Fody
                 il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(locationProp.SetMethod));
             }
 
-            // Set up getter delegate
+            // Set up getter delegate - create a wrapper method that boxes value types
             var getterDelegateProp = locationArgsTypeDef?.Fields.FirstOrDefault(f => f.Name == "_getter");
             if (getterDelegateProp != null)
             {
+                // Create a wrapper method that returns object (boxes value types)
+                var wrapperGetter = CreateGetterWrapper(property, originalGetter);
+                property.DeclaringType.Methods.Add(wrapperGetter);
+
                 il.Emit(OpCodes.Dup);
-                // Create Func<object> that calls the original getter
                 if (!getter.IsStatic)
                     il.Emit(OpCodes.Ldarg_0);
                 else
                     il.Emit(OpCodes.Ldnull);
 
-                il.Emit(OpCodes.Ldftn, originalGetter);
+                il.Emit(OpCodes.Ldftn, wrapperGetter);
 
-                var funcType = ModuleDefinition.ImportReference(typeof(Func<object>));
                 var funcCtor = ModuleDefinition.ImportReference(
                     typeof(Func<object>).GetConstructors()[0]);
                 il.Emit(OpCodes.Newobj, funcCtor);
@@ -1209,19 +1211,22 @@ namespace DotNetAspects.Fody
                 il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(locationProp.SetMethod));
             }
 
-            // Set up setter delegate
+            // Set up setter delegate - create a wrapper method that unboxes value types
             var setterDelegateProp = locationArgsTypeDef?.Fields.FirstOrDefault(f => f.Name == "_setter");
             if (setterDelegateProp != null)
             {
+                // Create a wrapper method that accepts object and unboxes to the correct type
+                var wrapperSetter = CreateSetterWrapper(property, originalSetter);
+                property.DeclaringType.Methods.Add(wrapperSetter);
+
                 il.Emit(OpCodes.Dup);
                 if (!setter.IsStatic)
                     il.Emit(OpCodes.Ldarg_0);
                 else
                     il.Emit(OpCodes.Ldnull);
 
-                il.Emit(OpCodes.Ldftn, originalSetter);
+                il.Emit(OpCodes.Ldftn, wrapperSetter);
 
-                var actionType = ModuleDefinition.ImportReference(typeof(Action<object>));
                 var actionCtor = ModuleDefinition.ImportReference(
                     typeof(Action<object>).GetConstructors()[0]);
                 il.Emit(OpCodes.Newobj, actionCtor);
@@ -1328,6 +1333,91 @@ namespace DotNetAspects.Fody
             }
 
             return clone;
+        }
+
+        /// <summary>
+        /// Creates a wrapper method that calls the original getter and returns object (boxing value types).
+        /// This is needed because Func&lt;object&gt; cannot directly reference a method returning a value type.
+        /// </summary>
+        private MethodDefinition CreateGetterWrapper(PropertyDefinition property, MethodDefinition originalGetter)
+        {
+            var objectType = ModuleDefinition.ImportReference(typeof(object));
+
+            var attributes = MethodAttributes.Private | MethodAttributes.HideBySig;
+            if (originalGetter.IsStatic)
+                attributes |= MethodAttributes.Static;
+
+            var wrapper = new MethodDefinition(
+                property.Name + "$GetterWrapper",
+                attributes,
+                objectType);
+
+            if (!originalGetter.IsStatic)
+                wrapper.HasThis = true;
+
+            wrapper.Body.InitLocals = true;
+            var il = wrapper.Body.GetILProcessor();
+
+            // Call the original getter
+            if (!originalGetter.IsStatic)
+                il.Emit(OpCodes.Ldarg_0);
+
+            il.Emit(OpCodes.Call, originalGetter);
+
+            // Box if value type
+            if (property.PropertyType.IsValueType || property.PropertyType.IsGenericParameter)
+                il.Emit(OpCodes.Box, property.PropertyType);
+
+            il.Emit(OpCodes.Ret);
+
+            return wrapper;
+        }
+
+        /// <summary>
+        /// Creates a wrapper method that accepts object, unboxes value types, and calls the original setter.
+        /// This is needed because Action&lt;object&gt; cannot directly reference a method accepting a value type.
+        /// </summary>
+        private MethodDefinition CreateSetterWrapper(PropertyDefinition property, MethodDefinition originalSetter)
+        {
+            var objectType = ModuleDefinition.ImportReference(typeof(object));
+            var voidType = ModuleDefinition.TypeSystem.Void;
+
+            var attributes = MethodAttributes.Private | MethodAttributes.HideBySig;
+            if (originalSetter.IsStatic)
+                attributes |= MethodAttributes.Static;
+
+            var wrapper = new MethodDefinition(
+                property.Name + "$SetterWrapper",
+                attributes,
+                voidType);
+
+            if (!originalSetter.IsStatic)
+                wrapper.HasThis = true;
+
+            // Add object parameter
+            wrapper.Parameters.Add(new ParameterDefinition("value", ParameterAttributes.None, objectType));
+
+            wrapper.Body.InitLocals = true;
+            var il = wrapper.Body.GetILProcessor();
+
+            // Load 'this' for instance methods
+            if (!originalSetter.IsStatic)
+                il.Emit(OpCodes.Ldarg_0);
+
+            // Load and unbox/cast the value parameter
+            il.Emit(OpCodes.Ldarg, originalSetter.IsStatic ? 0 : 1);
+
+            if (property.PropertyType.IsValueType || property.PropertyType.IsGenericParameter)
+                il.Emit(OpCodes.Unbox_Any, property.PropertyType);
+            else
+                il.Emit(OpCodes.Castclass, property.PropertyType);
+
+            // Call the original setter
+            il.Emit(OpCodes.Call, originalSetter);
+
+            il.Emit(OpCodes.Ret);
+
+            return wrapper;
         }
 
         private Instruction CopyInstruction(Instruction instr)
