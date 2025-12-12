@@ -74,3 +74,6 @@ FodyWeavers.xsd
 .env
 .env.*
 !.env.example
+
+# Claude Code configuration (local only)
+CLAUDE.md

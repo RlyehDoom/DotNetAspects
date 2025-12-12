@@ -33,6 +33,9 @@ namespace DotNetAspects.Fody
         private TypeReference? _locationInterceptionAspectType;
         private TypeReference? _locationInterceptionArgsType;
         private MethodReference? _locationInterceptionArgsCtor;
+        private TypeReference? _locationInfoType;
+        private MethodReference? _locationInfoCtor;
+        private MethodReference? _getPropertyFromHandle;
 
         public override void Execute()
         {
@@ -119,6 +122,30 @@ namespace DotNetAspects.Fody
                     if (liaCtor != null)
                     {
                         _locationInterceptionArgsCtor = ModuleDefinition.ImportReference(liaCtor);
+                    }
+                }
+
+                // Get LocationInfo type and constructor
+                _locationInfoType = ResolveType("DotNetAspects.Args.LocationInfo");
+                if (_locationInfoType != null)
+                {
+                    var locInfoTypeDef = _locationInfoType.Resolve();
+                    var locInfoCtor = locInfoTypeDef?.Methods.FirstOrDefault(m => m.IsConstructor && !m.HasParameters);
+                    if (locInfoCtor != null)
+                    {
+                        _locationInfoCtor = ModuleDefinition.ImportReference(locInfoCtor);
+                    }
+                }
+
+                // Get PropertyInfo.GetPropertyFromHandle
+                var propertyInfoType = FindTypeDefinition("System.Reflection.PropertyInfo");
+                if (propertyInfoType != null)
+                {
+                    var getPropMethod = propertyInfoType.Methods.FirstOrDefault(m =>
+                        m.Name == "GetPropertyFromHandle" && m.Parameters.Count == 2);
+                    if (getPropMethod != null)
+                    {
+                        _getPropertyFromHandle = ModuleDefinition.ImportReference(getPropMethod);
                     }
                 }
 
@@ -927,6 +954,67 @@ namespace DotNetAspects.Fody
                 il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(locationTypeProp.SetMethod));
             }
 
+            // Set Location (LocationInfo object with PropertyInfo)
+            var locationProp = locationArgsTypeDef?.Properties.FirstOrDefault(p => p.Name == "Location");
+            if (locationProp?.SetMethod != null && _locationInfoType != null && _locationInfoCtor != null)
+            {
+                var locationInfoTypeDef = _locationInfoType.Resolve();
+
+                il.Emit(OpCodes.Dup); // dup args
+
+                // Create new LocationInfo()
+                il.Emit(OpCodes.Newobj, _locationInfoCtor);
+
+                // Set LocationInfo.Name
+                var nameProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "Name");
+                if (nameProp?.SetMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldstr, property.Name);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(nameProp.SetMethod));
+                }
+
+                // Set LocationInfo.LocationType
+                var locTypeProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "LocationType");
+                if (locTypeProp?.SetMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldtoken, property.PropertyType);
+                    il.Emit(OpCodes.Call, _getTypeFromHandle);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(locTypeProp.SetMethod));
+                }
+
+                // Set LocationInfo.DeclaringType
+                var declTypeProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "DeclaringType");
+                if (declTypeProp?.SetMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldtoken, property.DeclaringType);
+                    il.Emit(OpCodes.Call, _getTypeFromHandle);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(declTypeProp.SetMethod));
+                }
+
+                // Set LocationInfo.PropertyInfo using Type.GetProperty(name)
+                var propInfoProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "PropertyInfo");
+                var typeType = FindTypeDefinition("System.Type");
+                var getPropertyMethod = typeType?.Methods.FirstOrDefault(m =>
+                    m.Name == "GetProperty" && m.Parameters.Count == 1 &&
+                    m.Parameters[0].ParameterType.FullName == "System.String");
+                if (propInfoProp?.SetMethod != null && getPropertyMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    // declaringType.GetProperty("PropertyName")
+                    il.Emit(OpCodes.Ldtoken, property.DeclaringType);
+                    il.Emit(OpCodes.Call, _getTypeFromHandle);
+                    il.Emit(OpCodes.Ldstr, property.Name);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(getPropertyMethod));
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(propInfoProp.SetMethod));
+                }
+
+                // Set args.Location = locationInfo
+                il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(locationProp.SetMethod));
+            }
+
             // Set up getter delegate
             var getterDelegateProp = locationArgsTypeDef?.Fields.FirstOrDefault(f => f.Name == "_getter");
             if (getterDelegateProp != null)
@@ -1058,6 +1146,67 @@ namespace DotNetAspects.Fody
                 if (property.PropertyType.IsValueType || property.PropertyType.IsGenericParameter)
                     il.Emit(OpCodes.Box, property.PropertyType);
                 il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(valueProp.SetMethod));
+            }
+
+            // Set Location (LocationInfo object with PropertyInfo)
+            var locationProp = locationArgsTypeDef?.Properties.FirstOrDefault(p => p.Name == "Location");
+            if (locationProp?.SetMethod != null && _locationInfoType != null && _locationInfoCtor != null)
+            {
+                var locationInfoTypeDef = _locationInfoType.Resolve();
+
+                il.Emit(OpCodes.Dup); // dup args
+
+                // Create new LocationInfo()
+                il.Emit(OpCodes.Newobj, _locationInfoCtor);
+
+                // Set LocationInfo.Name
+                var nameProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "Name");
+                if (nameProp?.SetMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldstr, property.Name);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(nameProp.SetMethod));
+                }
+
+                // Set LocationInfo.LocationType
+                var locTypeProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "LocationType");
+                if (locTypeProp?.SetMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldtoken, property.PropertyType);
+                    il.Emit(OpCodes.Call, _getTypeFromHandle);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(locTypeProp.SetMethod));
+                }
+
+                // Set LocationInfo.DeclaringType
+                var declTypeProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "DeclaringType");
+                if (declTypeProp?.SetMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldtoken, property.DeclaringType);
+                    il.Emit(OpCodes.Call, _getTypeFromHandle);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(declTypeProp.SetMethod));
+                }
+
+                // Set LocationInfo.PropertyInfo using Type.GetProperty(name)
+                var propInfoProp = locationInfoTypeDef?.Properties.FirstOrDefault(p => p.Name == "PropertyInfo");
+                var typeType = FindTypeDefinition("System.Type");
+                var getPropertyMethod = typeType?.Methods.FirstOrDefault(m =>
+                    m.Name == "GetProperty" && m.Parameters.Count == 1 &&
+                    m.Parameters[0].ParameterType.FullName == "System.String");
+                if (propInfoProp?.SetMethod != null && getPropertyMethod != null)
+                {
+                    il.Emit(OpCodes.Dup);
+                    // declaringType.GetProperty("PropertyName")
+                    il.Emit(OpCodes.Ldtoken, property.DeclaringType);
+                    il.Emit(OpCodes.Call, _getTypeFromHandle);
+                    il.Emit(OpCodes.Ldstr, property.Name);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(getPropertyMethod));
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(propInfoProp.SetMethod));
+                }
+
+                // Set args.Location = locationInfo
+                il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(locationProp.SetMethod));
             }
 
             // Set up setter delegate
