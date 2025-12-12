@@ -39,8 +39,15 @@ namespace DotNetAspects.Args
     /// </summary>
     public class LocationInterceptionArgs
     {
-        private Func<object>? _getter;
-        private Action<object>? _setter;
+        /// <summary>
+        /// Internal getter delegate. Public for IL weaving access.
+        /// </summary>
+        public Func<object>? _getter;
+
+        /// <summary>
+        /// Internal setter delegate. Public for IL weaving access.
+        /// </summary>
+        public Action<object>? _setter;
 
         /// <summary>
         /// Initializes a new instance of <see cref="LocationInterceptionArgs"/>.

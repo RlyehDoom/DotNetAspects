@@ -9,6 +9,7 @@ This guide explains how to migrate from PostSharp to DotNetAspects for method in
 - [Overview](#overview)
 - [Installation](#installation)
 - [Migration Steps](#migration-steps)
+- [Enterprise Migration](#enterprise-migration)
 - [API Compatibility](#api-compatibility)
 - [Supported Features](#supported-features)
 - [Examples](#examples)
@@ -44,6 +45,8 @@ Remove PostSharp packages and configuration from your project:
 
 <!-- Also remove if present -->
 <DontImportPostSharp>True</DontImportPostSharp>
+<SkipPostSharp>True</SkipPostSharp>
+<SkipPostSharp>False</SkipPostSharp>
 ```
 
 ### Step 2: Add DotNetAspects
@@ -113,6 +116,182 @@ Build the project. Fody will run the DotNetAspects weaver during compilation:
 ```
 Fody/DotNetAspects: Weaving method: MyNamespace.MyClass.MyMethod
 ```
+
+## Enterprise Migration
+
+When migrating large enterprise projects with multiple layers and shared libraries, you must migrate **the entire dependency chain** that uses PostSharp types.
+
+### Understanding the Dependency Chain
+
+In enterprise applications, `MethodInterceptionArgs` often flows through multiple layers:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Aspects Project (SmartAttributes)                              │
+│  - Uses: MethodInterceptionAspect, MethodInterceptionArgs       │
+│  - Passes args to: Interfaces, MethodParameters                 │
+└─────────────────────────┬───────────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────────┐
+│  Interfaces Project                                             │
+│  - Defines: ITaskHelper.Execute(MethodInterceptionArgs args)    │
+│  - References: MethodInterceptionArgs in method signatures      │
+└─────────────────────────┬───────────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────────┐
+│  MethodParameters Project                                       │
+│  - Defines: ExecuteTaskIn { MethodInterceptionArgs Args; }      │
+│  - DTOs that contain MethodInterceptionArgs                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**All projects in the chain must be migrated together**, or you'll get type mismatch errors:
+```
+error CS0029: Cannot implicitly convert type
+  'DotNetAspects.Args.MethodInterceptionArgs' to
+  'PostSharp.Aspects.MethodInterceptionArgs'
+```
+
+### Migration Order
+
+Migrate projects in this order (bottom-up):
+
+1. **MethodParameters/DTOs** - Classes that contain `MethodInterceptionArgs` as properties
+2. **Interfaces** - Interfaces with `MethodInterceptionArgs` in method signatures
+3. **Aspects/Attributes** - The actual aspect classes
+4. **Business Logic** - Implementations that use the interfaces
+
+### Real-World Example
+
+Here's what was required to migrate a banking application's aspects:
+
+| Project | Files Changed | Description |
+|---------|---------------|-------------|
+| `Framework.MethodParameters` | 7 files | DTOs containing `MethodInterceptionArgs` |
+| `ApplicationServer.Interfaces` | 4 files | Interfaces with `MethodInterceptionArgs` params |
+| `ApplicationServer.SmartAttributes` | 8 files | Actual aspect classes |
+
+### Migration Checklist for Each Project
+
+For **each project** in the dependency chain:
+
+**1. Update .csproj:**
+```xml
+<!-- REMOVE -->
+<PackageReference Include="PostSharp" Version="x.x.x" />
+<DontImportPostSharp>True</DontImportPostSharp>
+<SkipPostSharp>True</SkipPostSharp>
+
+<!-- ADD -->
+<PackageReference Include="DotNetAspects" Version="1.3.2" />
+<!-- Only add Fody to projects that DEFINE aspects, not projects that just use types -->
+```
+
+**2. Update all .cs files:**
+```csharp
+// REMOVE
+using PostSharp.Aspects;
+using PostSharp.Serialization;
+using PostSharp.Extensibility;
+
+// ADD
+using DotNetAspects.Args;           // For MethodInterceptionArgs
+using DotNetAspects.Interception;   // For aspect base classes
+using DotNetAspects.Extensibility;  // For MulticastAttributeUsage
+```
+
+**3. Remove `[PSerializable]`** from all classes (optional but recommended)
+
+### Finding All Files to Migrate
+
+Use these commands to find all files that need migration:
+
+```bash
+# Find all projects referencing PostSharp
+grep -r "PostSharp" --include="*.csproj" .
+
+# Find all C# files using PostSharp
+grep -r "using PostSharp" --include="*.cs" .
+
+# Find all classes with [PSerializable]
+grep -r "\[PSerializable\]" --include="*.cs" .
+```
+
+### Common Enterprise Patterns
+
+**Pattern 1: Args in DTOs**
+```csharp
+// Before
+using PostSharp.Aspects;
+
+public class ExecuteTaskIn : BaseMethodIn
+{
+    public MethodInterceptionArgs Arguments { get; set; }
+}
+
+// After
+using DotNetAspects.Args;
+
+public class ExecuteTaskIn : BaseMethodIn
+{
+    public MethodInterceptionArgs Arguments { get; set; }
+}
+```
+
+**Pattern 2: Args in Interfaces**
+```csharp
+// Before
+using PostSharp.Aspects;
+
+public interface ITaskHelper
+{
+    TaskOut Execute(MethodInterceptionArgs args, TaskIn input);
+}
+
+// After
+using DotNetAspects.Args;
+
+public interface ITaskHelper
+{
+    TaskOut Execute(MethodInterceptionArgs args, TaskIn input);
+}
+```
+
+**Pattern 3: Helper Classes**
+```csharp
+// Before
+using PostSharp.Aspects;
+
+public class AttributeHelper
+{
+    public static T ExtractArgument<T>(MethodInterceptionArgs args)
+    {
+        return (T)args.Arguments[0];
+    }
+}
+
+// After
+using DotNetAspects.Args;
+
+public class AttributeHelper
+{
+    public static T ExtractArgument<T>(MethodInterceptionArgs args)
+    {
+        return (T)args.Arguments[0];
+    }
+}
+```
+
+### Fody Package Placement
+
+**Important:** Only add the Fody package to projects that **define** aspects (inherit from `MethodInterceptionAspect`, etc.). Projects that only **use** the types (like DTOs or interfaces) only need `DotNetAspects`:
+
+| Project Type | DotNetAspects | Fody |
+|--------------|---------------|------|
+| Aspects/Attributes | ✅ | ✅ |
+| Interfaces | ✅ | ❌ |
+| MethodParameters/DTOs | ✅ | ❌ |
+| Business Logic (uses aspects) | ✅ | ✅ |
 
 ## API Compatibility
 
@@ -276,6 +455,23 @@ PublicKeyToken: `97f295f398ec39b7`
 Fody runs during each build. For faster development:
 - Use incremental builds
 - Consider `<FodyDeferOptionalWeavers>true</FodyDeferOptionalWeavers>`
+
+### Error: Cannot convert 'DotNetAspects.Args.MethodInterceptionArgs' to 'PostSharp.Aspects.MethodInterceptionArgs'
+
+This error means you have a **partial migration**. Some projects still reference PostSharp while others use DotNetAspects.
+
+**Solution:** Migrate all projects in the dependency chain. See [Enterprise Migration](#enterprise-migration) for details.
+
+Common causes:
+- DTOs/MethodParameters project still uses PostSharp
+- Interface project still uses PostSharp
+- Missing `using DotNetAspects.Args;` in some files
+
+Find all remaining PostSharp references:
+```bash
+grep -r "using PostSharp" --include="*.cs" .
+grep -r "PostSharp" --include="*.csproj" .
+```
 
 ---
 
