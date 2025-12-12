@@ -455,39 +455,8 @@ namespace DotNetAspects.Fody
             method.Body.Variables.Add(argumentsVar);   // 2
             method.Body.Variables.Add(originalMethodVar); // 3
 
-            // === Create aspect instance ===
-            var aspectCtor = aspect.AttributeType.Resolve().Methods
-                .FirstOrDefault(m => m.IsConstructor && !m.HasParameters);
-
-            if (aspectCtor == null)
-            {
-                WriteError($"Aspect {aspect.AttributeType.Name} has no parameterless constructor");
-                il.Emit(OpCodes.Ret);
-                return;
-            }
-
-            il.Emit(OpCodes.Newobj, ModuleDefinition.ImportReference(aspectCtor));
-
-            // Set properties from attribute
-            foreach (var prop in aspect.Properties)
-            {
-                il.Emit(OpCodes.Dup);
-                EmitLdcValue(il, prop.Argument.Value, prop.Argument.Type);
-
-                var setter = aspect.AttributeType.Resolve().Properties
-                    .FirstOrDefault(p => p.Name == prop.Name)?.SetMethod;
-                if (setter != null)
-                {
-                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(setter));
-                }
-                else
-                {
-                    il.Emit(OpCodes.Pop);
-                    il.Emit(OpCodes.Pop);
-                }
-            }
-
-            il.Emit(OpCodes.Stloc, aspectVar);
+            // === Create aspect instance with constructor arguments ===
+            EmitAspectCreation(il, aspect, aspectVar);
 
             // === Get MethodInfo for original method ===
             il.Emit(OpCodes.Ldtoken, method.DeclaringType);
@@ -627,36 +596,8 @@ namespace DotNetAspects.Fody
                 method.Body.Variables.Add(returnVar);  // 2
             method.Body.Variables.Add(exceptionVar);   // 2 or 3
 
-            // Create aspect instance
-            var aspectCtor = aspect.AttributeType.Resolve().Methods
-                .FirstOrDefault(m => m.IsConstructor && !m.HasParameters);
-            if (aspectCtor == null)
-            {
-                WriteError($"Aspect {aspect.AttributeType.Name} has no parameterless constructor");
-                il.Emit(OpCodes.Ret);
-                return;
-            }
-
-            il.Emit(OpCodes.Newobj, ModuleDefinition.ImportReference(aspectCtor));
-
-            // Set properties
-            foreach (var prop in aspect.Properties)
-            {
-                il.Emit(OpCodes.Dup);
-                EmitLdcValue(il, prop.Argument.Value, prop.Argument.Type);
-                var setter = aspect.AttributeType.Resolve().Properties
-                    .FirstOrDefault(p => p.Name == prop.Name)?.SetMethod;
-                if (setter != null)
-                {
-                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(setter));
-                }
-                else
-                {
-                    il.Emit(OpCodes.Pop);
-                    il.Emit(OpCodes.Pop);
-                }
-            }
-            il.Emit(OpCodes.Stloc, aspectVar);
+            // Create aspect instance with constructor arguments
+            EmitAspectCreation(il, aspect, aspectVar);
 
             // Create MethodExecutionArgs
             il.Emit(OpCodes.Newobj, _methodExecutionArgsCtor);
@@ -891,33 +832,8 @@ namespace DotNetAspects.Fody
             getter.Body.Variables.Add(aspectVar);
             getter.Body.Variables.Add(argsVar);
 
-            // Create aspect instance
-            var aspectCtor = aspect.AttributeType.Resolve().Methods
-                .FirstOrDefault(m => m.IsConstructor && !m.HasParameters);
-            if (aspectCtor == null)
-            {
-                il.Emit(OpCodes.Ret);
-                return;
-            }
-
-            il.Emit(OpCodes.Newobj, ModuleDefinition.ImportReference(aspectCtor));
-
-            // Set properties
-            foreach (var prop in aspect.Properties)
-            {
-                il.Emit(OpCodes.Dup);
-                EmitLdcValue(il, prop.Argument.Value, prop.Argument.Type);
-                var setter = aspect.AttributeType.Resolve().Properties
-                    .FirstOrDefault(p => p.Name == prop.Name)?.SetMethod;
-                if (setter != null)
-                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(setter));
-                else
-                {
-                    il.Emit(OpCodes.Pop);
-                    il.Emit(OpCodes.Pop);
-                }
-            }
-            il.Emit(OpCodes.Stloc, aspectVar);
+            // Create aspect instance with constructor arguments
+            EmitAspectCreation(il, aspect, aspectVar);
 
             // Create LocationInterceptionArgs
             il.Emit(OpCodes.Newobj, _locationInterceptionArgsCtor);
@@ -1087,32 +1003,8 @@ namespace DotNetAspects.Fody
             setter.Body.Variables.Add(aspectVar);
             setter.Body.Variables.Add(argsVar);
 
-            // Create aspect instance
-            var aspectCtor = aspect.AttributeType.Resolve().Methods
-                .FirstOrDefault(m => m.IsConstructor && !m.HasParameters);
-            if (aspectCtor == null)
-            {
-                il.Emit(OpCodes.Ret);
-                return;
-            }
-
-            il.Emit(OpCodes.Newobj, ModuleDefinition.ImportReference(aspectCtor));
-
-            foreach (var prop in aspect.Properties)
-            {
-                il.Emit(OpCodes.Dup);
-                EmitLdcValue(il, prop.Argument.Value, prop.Argument.Type);
-                var propSetter = aspect.AttributeType.Resolve().Properties
-                    .FirstOrDefault(p => p.Name == prop.Name)?.SetMethod;
-                if (propSetter != null)
-                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(propSetter));
-                else
-                {
-                    il.Emit(OpCodes.Pop);
-                    il.Emit(OpCodes.Pop);
-                }
-            }
-            il.Emit(OpCodes.Stloc, aspectVar);
+            // Create aspect instance with constructor arguments
+            EmitAspectCreation(il, aspect, aspectVar);
 
             // Create LocationInterceptionArgs
             il.Emit(OpCodes.Newobj, _locationInterceptionArgsCtor);
@@ -1418,6 +1310,97 @@ namespace DotNetAspects.Fody
             il.Emit(OpCodes.Ret);
 
             return wrapper;
+        }
+
+        /// <summary>
+        /// Emits IL to create an aspect instance using the correct constructor and setting properties.
+        /// Handles both constructor arguments and named property arguments from the attribute.
+        /// </summary>
+        private void EmitAspectCreation(ILProcessor il, CustomAttribute aspect, VariableDefinition aspectVar)
+        {
+            var aspectTypeDef = aspect.AttributeType.Resolve();
+
+            // Find matching constructor based on attribute's constructor arguments
+            MethodDefinition? aspectCtor = null;
+
+            if (aspect.HasConstructorArguments)
+            {
+                // Find constructor that matches the argument types
+                var argCount = aspect.ConstructorArguments.Count;
+                aspectCtor = aspectTypeDef.Methods.FirstOrDefault(m =>
+                    m.IsConstructor &&
+                    m.Parameters.Count == argCount &&
+                    ParametersMatch(m.Parameters, aspect.ConstructorArguments));
+            }
+
+            // Fall back to parameterless constructor
+            if (aspectCtor == null)
+            {
+                aspectCtor = aspectTypeDef.Methods.FirstOrDefault(m =>
+                    m.IsConstructor && !m.HasParameters);
+            }
+
+            if (aspectCtor == null)
+            {
+                WriteError($"No suitable constructor found for aspect {aspect.AttributeType.Name}");
+                return;
+            }
+
+            // Emit constructor arguments
+            foreach (var arg in aspect.ConstructorArguments)
+            {
+                EmitLdcValue(il, arg.Value, arg.Type);
+            }
+
+            // Call constructor
+            il.Emit(OpCodes.Newobj, ModuleDefinition.ImportReference(aspectCtor));
+
+            // Set named properties
+            foreach (var prop in aspect.Properties)
+            {
+                il.Emit(OpCodes.Dup);
+                EmitLdcValue(il, prop.Argument.Value, prop.Argument.Type);
+
+                var setter = aspectTypeDef.Properties
+                    .FirstOrDefault(p => p.Name == prop.Name)?.SetMethod;
+                if (setter != null)
+                {
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(setter));
+                }
+                else
+                {
+                    il.Emit(OpCodes.Pop);
+                    il.Emit(OpCodes.Pop);
+                }
+            }
+
+            il.Emit(OpCodes.Stloc, aspectVar);
+        }
+
+        private bool ParametersMatch(
+            Mono.Collections.Generic.Collection<ParameterDefinition> parameters,
+            Mono.Collections.Generic.Collection<CustomAttributeArgument> arguments)
+        {
+            if (parameters.Count != arguments.Count)
+                return false;
+
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                var paramType = parameters[i].ParameterType.FullName;
+                var argType = arguments[i].Type.FullName;
+
+                // Direct match or compatible types
+                if (paramType != argType)
+                {
+                    // Allow some common type conversions
+                    if (!(paramType == "System.Object" ||
+                          (paramType == "System.String" && argType == "System.String")))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         private Instruction CopyInstruction(Instruction instr)
