@@ -5,13 +5,14 @@
 
 A lightweight AOP (Aspect-Oriented Programming) library for .NET, designed as a drop-in replacement for PostSharp's core interception APIs. Uses Fody for compile-time IL weaving.
 
-**Working in Progress**: Version 1.3.6 - This is the recommended version to start.
+**Working in Progress**: Version 1.4.0 - This is the recommended version to start.
 
 **Migrating from PostSharp?** See the [Migration Guide](MIGRATION_GUIDE.md) for step-by-step instructions.
 
-**Critical Fixes**: 
-- Old version had LocationInterceptionArgs as private and Fody need to access to them. 
+**Latest Fixes**: 
+- v.1.4.0 / Heavy Load Test with Concurrency & Memory Optimizations.
 - Issue was that Func<object> and Action<object> delegates cannot be directly created from methods that return/accept value types (like bool, int, etc.).
+- Old version had LocationInterceptionArgs as private and Fody need to access to them. 
 
 ## Features
 
