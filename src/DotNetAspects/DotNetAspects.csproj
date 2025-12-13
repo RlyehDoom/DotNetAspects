@@ -27,10 +27,6 @@
     <AssemblyOriginatorKeyFile>..\..\DotNetAspects.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
-    <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.7.0" />
-  </ItemGroup>
-
   <!-- Fody dependency - passed to consumers, disabled for this project -->
   <PropertyGroup>
     <DisableFody>true</DisableFody>
