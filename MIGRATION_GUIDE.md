@@ -27,7 +27,7 @@ DotNetAspects is a lightweight, open-source replacement for PostSharp that provi
 ### Package Structure
 
 ```
-DotNetAspects (v1.3.2 - Stable)
+DotNetAspects (v1.4.0 - Stable)
 ├── DotNetAspects.dll      # Core library with aspects
 └── DotNetAspects.Fody.dll # Fody weaver for IL weaving
 ```
@@ -55,7 +55,7 @@ Add the unified DotNetAspects package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="DotNetAspects" Version="1.3.2" />
+  <PackageReference Include="DotNetAspects" Version="1.4.0" />
   <PackageReference Include="Fody" Version="6.8.2">
     <PrivateAssets>all</PrivateAssets>
     <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -65,7 +65,7 @@ Add the unified DotNetAspects package:
 
 Or via CLI:
 ```bash
-dotnet add package DotNetAspects --version 1.3.2
+dotnet add package DotNetAspects --version 1.4.0
 dotnet add package Fody
 ```
 
@@ -183,7 +183,7 @@ For **each project** in the dependency chain:
 <SkipPostSharp>True</SkipPostSharp>
 
 <!-- ADD -->
-<PackageReference Include="DotNetAspects" Version="1.3.2" />
+<PackageReference Include="DotNetAspects" Version="1.4.0" />
 <!-- Only add Fody to projects that DEFINE aspects, not projects that just use types -->
 ```
 
@@ -332,7 +332,7 @@ public class AttributeHelper
 
 ## Supported Features
 
-### Fully Supported (v1.3.2)
+### Fully Supported (v1.4.0)
 
 - **MethodInterceptionAspect**: Method interception with `OnInvoke`
 - **OnMethodBoundaryAspect**: Method boundaries with `OnEntry`, `OnSuccess`, `OnException`, `OnExit`
@@ -342,6 +342,9 @@ public class AttributeHelper
 - Modifying return values
 - Skipping original method execution
 - Aspect properties (serialized at compile time)
+- **Constructor arguments** (e.g., `[ConfigurationAccessor("key")]`)
+- **Aspect instance caching** for high-throughput scenarios
+- **Performance optimizations** (zero-copy arguments, cached bindings)
 - Strong-named assemblies
 - Multi-targeting: netstandard2.0 and net8.0
 - In-memory weaver configuration (no FodyWeavers.xml needed)
@@ -445,7 +448,7 @@ The weaver must be properly configured. Check build output for weaving messages.
 
 DotNetAspects is strong-named. Use the stable version:
 ```xml
-<PackageReference Include="DotNetAspects" Version="1.3.2" />
+<PackageReference Include="DotNetAspects" Version="1.4.0" />
 ```
 
 PublicKeyToken: `97f295f398ec39b7`
