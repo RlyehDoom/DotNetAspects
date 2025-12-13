@@ -48,10 +48,17 @@ namespace DotNetAspects.Args
         /// <inheritdoc/>
         public object[] ToArray()
         {
+            // For zero or one argument, return the internal array directly (safe for most use cases)
+            if (_arguments.Length <= 1)
+                return _arguments;
+
             var result = new object[_arguments.Length];
             Array.Copy(_arguments, result, _arguments.Length);
             return result;
         }
+
+        /// <inheritdoc/>
+        public object[] GetRawArray() => _arguments;
 
         /// <inheritdoc/>
         public IEnumerator<object> GetEnumerator()

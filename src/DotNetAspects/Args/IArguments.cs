@@ -41,5 +41,13 @@ namespace DotNetAspects.Args
         /// </summary>
         /// <returns>An array containing all arguments.</returns>
         object[] ToArray();
+
+        /// <summary>
+        /// Gets the internal array without copying.
+        /// WARNING: Do not modify this array - it is shared with the internal state.
+        /// Use this for performance-critical scenarios where you need read-only access.
+        /// </summary>
+        /// <returns>The internal array reference.</returns>
+        object[] GetRawArray();
     }
 }

@@ -14,6 +14,12 @@ namespace DotNetAspects.Fody
     /// </summary>
     public class ModuleWeaver : BaseModuleWeaver
     {
+        // Aspect caching - maps type to a dictionary of aspect type name -> cached field
+        private readonly Dictionary<TypeDefinition, Dictionary<string, FieldDefinition>> _aspectCacheFields = new();
+
+        // Track MethodInfo cache fields per type (for caching reflection)
+        private readonly Dictionary<TypeDefinition, Dictionary<string, FieldDefinition>> _methodInfoCacheFields = new();
+
         // MethodInterceptionAspect types
         private TypeReference? _methodInterceptionAspectType;
         private TypeReference? _methodInterceptionArgsType;
@@ -1315,11 +1321,113 @@ namespace DotNetAspects.Fody
         /// <summary>
         /// Emits IL to create an aspect instance using the correct constructor and setting properties.
         /// Handles both constructor arguments and named property arguments from the attribute.
+        /// Uses static field caching for better performance in high-throughput scenarios.
         /// </summary>
         private void EmitAspectCreation(ILProcessor il, CustomAttribute aspect, VariableDefinition aspectVar)
         {
             var aspectTypeDef = aspect.AttributeType.Resolve();
+            var declaringType = il.Body.Method.DeclaringType;
 
+            // Generate a unique key for this aspect configuration
+            var aspectKey = GenerateAspectCacheKey(aspect);
+
+            // Get or create the cached field for this aspect
+            var cachedField = GetOrCreateAspectCacheField(declaringType, aspect, aspectKey);
+
+            if (cachedField != null)
+            {
+                // Use cached aspect with lazy initialization pattern
+                // if (_cachedAspect == null) { _cachedAspect = new Aspect(...); }
+                // aspectVar = _cachedAspect;
+
+                var fieldRef = ModuleDefinition.ImportReference(cachedField);
+
+                // Load the cached field
+                il.Emit(OpCodes.Ldsfld, fieldRef);
+
+                // Check if null
+                var skipInit = il.Create(OpCodes.Nop);
+                il.Emit(OpCodes.Brtrue, skipInit);
+
+                // Create new instance and store in cache
+                EmitAspectCreationDirect(il, aspect, aspectTypeDef);
+                il.Emit(OpCodes.Stsfld, fieldRef);
+
+                // Label for skip
+                il.Append(skipInit);
+
+                // Load from cache into local variable
+                il.Emit(OpCodes.Ldsfld, fieldRef);
+                il.Emit(OpCodes.Stloc, aspectVar);
+            }
+            else
+            {
+                // Fallback to direct creation (shouldn't happen normally)
+                EmitAspectCreationDirect(il, aspect, aspectTypeDef);
+                il.Emit(OpCodes.Stloc, aspectVar);
+            }
+        }
+
+        /// <summary>
+        /// Generates a unique key for caching an aspect based on its type, constructor args, and properties.
+        /// </summary>
+        private string GenerateAspectCacheKey(CustomAttribute aspect)
+        {
+            var key = aspect.AttributeType.FullName;
+
+            // Include constructor arguments in the key
+            if (aspect.HasConstructorArguments)
+            {
+                var args = string.Join("_", aspect.ConstructorArguments.Select(a =>
+                    a.Value?.ToString()?.Replace(" ", "") ?? "null"));
+                key += $"_ctor_{args}";
+            }
+
+            // Include properties in the key
+            if (aspect.HasProperties)
+            {
+                var props = string.Join("_", aspect.Properties.Select(p =>
+                    $"{p.Name}={p.Argument.Value?.ToString()?.Replace(" ", "") ?? "null"}"));
+                key += $"_props_{props}";
+            }
+
+            // Sanitize the key to be a valid field name
+            return "_cached_" + key.Replace(".", "_").Replace("-", "_").Replace("=", "_");
+        }
+
+        /// <summary>
+        /// Gets or creates a static field to cache the aspect instance.
+        /// </summary>
+        private FieldDefinition? GetOrCreateAspectCacheField(TypeDefinition type, CustomAttribute aspect, string fieldName)
+        {
+            if (!_aspectCacheFields.TryGetValue(type, out var fields))
+            {
+                fields = new Dictionary<string, FieldDefinition>();
+                _aspectCacheFields[type] = fields;
+            }
+
+            if (fields.TryGetValue(fieldName, out var existingField))
+            {
+                return existingField;
+            }
+
+            // Create a new static field for caching this aspect
+            var field = new FieldDefinition(
+                fieldName,
+                FieldAttributes.Private | FieldAttributes.Static,
+                ModuleDefinition.ImportReference(aspect.AttributeType));
+
+            type.Fields.Add(field);
+            fields[fieldName] = field;
+
+            return field;
+        }
+
+        /// <summary>
+        /// Emits IL to directly create an aspect instance without caching.
+        /// </summary>
+        private void EmitAspectCreationDirect(ILProcessor il, CustomAttribute aspect, TypeDefinition aspectTypeDef)
+        {
             // Find matching constructor based on attribute's constructor arguments
             MethodDefinition? aspectCtor = null;
 
@@ -1373,8 +1481,6 @@ namespace DotNetAspects.Fody
                     il.Emit(OpCodes.Pop);
                 }
             }
-
-            il.Emit(OpCodes.Stloc, aspectVar);
         }
 
         private bool ParametersMatch(

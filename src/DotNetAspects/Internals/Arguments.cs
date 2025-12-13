@@ -50,6 +50,9 @@ namespace DotNetAspects.Internals
         public object[] ToArray() => new object[] { Arg0 };
 
         /// <inheritdoc/>
+        public object[] GetRawArray() => ToArray();
+
+        /// <inheritdoc/>
         public IEnumerator<object> GetEnumerator()
         {
             yield return Arg0;
@@ -109,6 +112,9 @@ namespace DotNetAspects.Internals
 
         /// <inheritdoc/>
         public object[] ToArray() => new object[] { Arg0, Arg1 };
+
+        /// <inheritdoc/>
+        public object[] GetRawArray() => ToArray();
 
         /// <inheritdoc/>
         public IEnumerator<object> GetEnumerator()
@@ -180,6 +186,9 @@ namespace DotNetAspects.Internals
 
         /// <inheritdoc/>
         public object[] ToArray() => new object[] { Arg0, Arg1, Arg2 };
+
+        /// <inheritdoc/>
+        public object[] GetRawArray() => ToArray();
 
         /// <inheritdoc/>
         public IEnumerator<object> GetEnumerator()
@@ -261,6 +270,9 @@ namespace DotNetAspects.Internals
 
         /// <inheritdoc/>
         public object[] ToArray() => new object[] { Arg0, Arg1, Arg2, Arg3 };
+
+        /// <inheritdoc/>
+        public object[] GetRawArray() => ToArray();
 
         /// <inheritdoc/>
         public IEnumerator<object> GetEnumerator()

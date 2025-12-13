@@ -11,6 +11,7 @@ namespace DotNetAspects.Args
     {
         private Func<object[], object?>? _invoker;
         private MethodInfo? _originalMethod;
+        private MethodBinding? _cachedBinding;
 
         /// <summary>
         /// Initializes a new instance of <see cref="MethodInterceptionArgs"/>.
@@ -106,14 +107,16 @@ namespace DotNetAspects.Args
         public object? Invoke(IArguments arguments)
         {
             object? result;
+            // Use GetRawArray() to avoid unnecessary array allocation
+            var args = arguments.GetRawArray();
 
             if (_invoker != null)
             {
-                result = _invoker(arguments.ToArray());
+                result = _invoker(args);
             }
             else if (_originalMethod != null)
             {
-                result = _originalMethod.Invoke(Instance, arguments.ToArray());
+                result = _originalMethod.Invoke(Instance, args);
             }
             else
             {
@@ -127,10 +130,19 @@ namespace DotNetAspects.Args
 
         /// <summary>
         /// Gets the method binding for direct invocation.
+        /// Cached for performance - avoid creating new objects on each access.
         /// </summary>
-        public MethodBinding? Binding => _originalMethod != null
-            ? new MethodBinding(Instance, _originalMethod)
-            : null;
+        public MethodBinding? Binding
+        {
+            get
+            {
+                if (_originalMethod == null)
+                    return null;
+
+                // Create and cache the binding on first access
+                return _cachedBinding ??= new MethodBinding(Instance, _originalMethod);
+            }
+        }
     }
 
     /// <summary>
