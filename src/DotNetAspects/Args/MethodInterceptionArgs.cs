@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Threading.Tasks;
 
 namespace DotNetAspects.Args
 {
@@ -126,6 +127,54 @@ namespace DotNetAspects.Args
 
             ReturnValue = result;
             return result;
+        }
+
+        /// <summary>
+        /// Proceeds with the original method invocation asynchronously using the current arguments.
+        /// Awaits the underlying <see cref="Task"/>/<see cref="Task{TResult}"/> and unwraps the result
+        /// into <see cref="ReturnValue"/>.
+        /// </summary>
+        /// <returns>The unwrapped return value of the method (null for a non-generic <see cref="Task"/>).</returns>
+        public Task<object?> ProceedAsync()
+        {
+            return InvokeAsync(Arguments);
+        }
+
+        /// <summary>
+        /// Invokes the original method with the specified arguments asynchronously, awaiting the
+        /// returned <see cref="Task"/>/<see cref="Task{TResult}"/> and unwrapping its result.
+        /// </summary>
+        /// <param name="arguments">The arguments to pass to the method.</param>
+        /// <returns>The unwrapped return value of the method (null for a non-generic <see cref="Task"/>).</returns>
+        public async Task<object?> InvokeAsync(IArguments arguments)
+        {
+            // Invoke() already stores the raw task into ReturnValue.
+            var raw = Invoke(arguments);
+
+            if (raw is Task task)
+            {
+                await task.ConfigureAwait(false);
+
+                var taskType = task.GetType();
+                if (taskType.IsGenericType)
+                {
+                    var resultArg = taskType.GetGenericArguments()[0];
+                    // async Task may surface as Task<VoidTaskResult>; treat as void.
+                    if (resultArg.FullName != "System.Threading.Tasks.VoidTaskResult")
+                    {
+                        var resultValue = taskType.GetProperty("Result")?.GetValue(task);
+                        ReturnValue = resultValue;
+                        return resultValue;
+                    }
+                }
+
+                ReturnValue = null;
+                return null;
+            }
+
+            // Not awaitable (e.g. method was not actually async) - return as-is.
+            ReturnValue = raw;
+            return raw;
         }
 
         /// <summary>

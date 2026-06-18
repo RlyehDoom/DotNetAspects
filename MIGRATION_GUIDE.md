@@ -27,7 +27,7 @@ DotNetAspects is a lightweight, open-source replacement for PostSharp that provi
 ### Package Structure
 
 ```
-DotNetAspects (v1.4.0 - Stable)
+DotNetAspects (v1.5.0 - Stable)
 ├── DotNetAspects.dll      # Core library with aspects
 └── DotNetAspects.Fody.dll # Fody weaver for IL weaving
 ```
@@ -55,7 +55,7 @@ Add the unified DotNetAspects package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="DotNetAspects" Version="1.4.0" />
+  <PackageReference Include="DotNetAspects" Version="1.5.0" />
   <PackageReference Include="Fody" Version="6.8.2">
     <PrivateAssets>all</PrivateAssets>
     <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -65,7 +65,7 @@ Add the unified DotNetAspects package:
 
 Or via CLI:
 ```bash
-dotnet add package DotNetAspects --version 1.4.0
+dotnet add package DotNetAspects --version 1.5.0
 dotnet add package Fody
 ```
 
@@ -183,7 +183,7 @@ For **each project** in the dependency chain:
 <SkipPostSharp>True</SkipPostSharp>
 
 <!-- ADD -->
-<PackageReference Include="DotNetAspects" Version="1.4.0" />
+<PackageReference Include="DotNetAspects" Version="1.5.0" />
 <!-- Only add Fody to projects that DEFINE aspects, not projects that just use types -->
 ```
 
@@ -332,12 +332,14 @@ public class AttributeHelper
 
 ## Supported Features
 
-### Fully Supported (v1.4.0)
+### Fully Supported (v1.5.0)
 
-- **MethodInterceptionAspect**: Method interception with `OnInvoke`
-- **OnMethodBoundaryAspect**: Method boundaries with `OnEntry`, `OnSuccess`, `OnException`, `OnExit`
+- **MethodInterceptionAspect**: Method interception with `OnInvoke` / `OnInvokeAsync`
+- **OnMethodBoundaryAspect**: Method boundaries with `OnEntry`, `OnSuccess`, `OnException`, `OnExit` (async-aware)
 - **LocationInterceptionAspect**: Property interception with `OnGetValue`, `OnSetValue`
-- `Proceed()` and `Invoke()` methods
+- `Proceed()` / `Invoke()` and `ProceedAsync()` / `InvokeAsync()` methods
+- **Async method interception** for `Task` / `Task<T>` (override `OnInvokeAsync`, `await args.ProceedAsync()`)
+- **Cross-assembly aspects**: aspects defined in a separate assembly, applied where DotNetAspects is only a transitive reference
 - Access to method arguments
 - Modifying return values
 - Skipping original method execution
@@ -346,14 +348,14 @@ public class AttributeHelper
 - **Aspect instance caching** for high-throughput scenarios
 - **Performance optimizations** (zero-copy arguments, cached bindings)
 - Strong-named assemblies
-- Multi-targeting: netstandard2.0 and net8.0
+- Multi-targeting: netstandard2.0, net8.0 and net9.0
 - In-memory weaver configuration (no FodyWeavers.xml needed)
 
 ### Not Yet Implemented
 
+- `ValueTask` / `ValueTask<T>` interception
 - Assembly-wide aspect application
 - Aspect multicasting with patterns
-- Async method interception
 
 ## Examples
 
@@ -448,7 +450,7 @@ The weaver must be properly configured. Check build output for weaving messages.
 
 DotNetAspects is strong-named. Use the stable version:
 ```xml
-<PackageReference Include="DotNetAspects" Version="1.4.0" />
+<PackageReference Include="DotNetAspects" Version="1.5.0" />
 ```
 
 PublicKeyToken: `97f295f398ec39b7`

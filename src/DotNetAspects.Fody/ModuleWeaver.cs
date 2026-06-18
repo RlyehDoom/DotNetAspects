@@ -35,6 +35,15 @@ namespace DotNetAspects.Fody
         private TypeReference? _methodExecutionArgsType;
         private MethodReference? _methodExecutionArgsCtor;
 
+        // Async support
+        private TypeReference? _taskType;
+        private MethodReference? _taskGetCompleted;
+        private MethodReference? _taskFromResultOpen;
+        private MethodReference? _asyncBoundaryRunTask;
+        private MethodReference? _asyncBoundaryRunTaskOfTOpen;
+        private MethodReference? _asyncInterceptionRunVoid;
+        private MethodReference? _asyncInterceptionRunResultOpen;
+
         // LocationInterceptionAspect types
         private TypeReference? _locationInterceptionAspectType;
         private TypeReference? _locationInterceptionArgsType;
@@ -47,7 +56,19 @@ namespace DotNetAspects.Fody
         {
             if (!InitializeTypeReferences())
             {
-                WriteWarning("DotNetAspects types not found. Skipping weaving.");
+                // Only warn loudly if aspects are actually used; otherwise this assembly simply has nothing
+                // to weave and a warning would be noise.
+                if (FindDotNetAspectsAssembly() != null)
+                {
+                    WriteError(
+                        "DotNetAspects aspect attributes are used in this assembly but the DotNetAspects " +
+                        "types could not be resolved. Ensure the DotNetAspects package is referenced " +
+                        "(directly or transitively) and resolvable by the weaver.");
+                }
+                else
+                {
+                    WriteInfo("No DotNetAspects aspects found in this assembly. Skipping weaving.");
+                }
                 return;
             }
 
@@ -183,6 +204,8 @@ namespace DotNetAspects.Fody
                 }
                 _methodInfoType = ModuleDefinition.ImportReference(methodInfoType);
 
+                InitializeAsyncReferences();
+
                 return true;
             }
             catch (Exception ex)
@@ -192,38 +215,208 @@ namespace DotNetAspects.Fody
             }
         }
 
-        private TypeReference? ResolveType(string fullName)
+        /// <summary>
+        /// Resolves the System.Threading.Tasks helpers and the DotNetAspects async runners used when
+        /// weaving asynchronous methods. Async weaving is silently disabled if any of these are missing.
+        /// </summary>
+        private void InitializeAsyncReferences()
         {
             try
             {
-                foreach (var assemblyRef in ModuleDefinition.AssemblyReferences)
+                var taskTypeDef = FindTypeDefinition("System.Threading.Tasks.Task");
+                if (taskTypeDef != null)
                 {
-                    var assembly = ModuleDefinition.AssemblyResolver.Resolve(assemblyRef);
-                    if (assembly != null)
-                    {
-                        var type = assembly.MainModule.Types.FirstOrDefault(t => t.FullName == fullName);
-                        if (type != null)
-                        {
-                            return ModuleDefinition.ImportReference(type);
-                        }
+                    _taskType = ModuleDefinition.ImportReference(taskTypeDef);
 
-                        // Check nested types
-                        foreach (var parentType in assembly.MainModule.Types)
-                        {
-                            var nested = parentType.NestedTypes.FirstOrDefault(t => t.FullName == fullName);
-                            if (nested != null)
-                            {
-                                return ModuleDefinition.ImportReference(nested);
-                            }
-                        }
-                    }
+                    var getCompleted = taskTypeDef.Methods
+                        .FirstOrDefault(m => m.Name == "get_CompletedTask" && m.IsStatic);
+                    if (getCompleted != null)
+                        _taskGetCompleted = ModuleDefinition.ImportReference(getCompleted);
+
+                    var fromResult = taskTypeDef.Methods
+                        .FirstOrDefault(m => m.Name == "FromResult" && m.IsStatic && m.HasGenericParameters);
+                    if (fromResult != null)
+                        _taskFromResultOpen = ModuleDefinition.ImportReference(fromResult);
+                }
+
+                var boundaryRunner = ResolveType("DotNetAspects.Internals.AsyncBoundaryRunner")?.Resolve();
+                if (boundaryRunner != null)
+                {
+                    var runTask = boundaryRunner.Methods.FirstOrDefault(m => m.Name == "RunTask");
+                    if (runTask != null)
+                        _asyncBoundaryRunTask = ModuleDefinition.ImportReference(runTask);
+
+                    var runTaskOfT = boundaryRunner.Methods.FirstOrDefault(m => m.Name == "RunTaskOfT");
+                    if (runTaskOfT != null)
+                        _asyncBoundaryRunTaskOfTOpen = ModuleDefinition.ImportReference(runTaskOfT);
+                }
+
+                var interceptionRunner = ResolveType("DotNetAspects.Internals.AsyncInterceptionRunner")?.Resolve();
+                if (interceptionRunner != null)
+                {
+                    var runVoid = interceptionRunner.Methods.FirstOrDefault(m => m.Name == "RunVoid");
+                    if (runVoid != null)
+                        _asyncInterceptionRunVoid = ModuleDefinition.ImportReference(runVoid);
+
+                    var runResult = interceptionRunner.Methods.FirstOrDefault(m => m.Name == "RunResult");
+                    if (runResult != null)
+                        _asyncInterceptionRunResultOpen = ModuleDefinition.ImportReference(runResult);
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteWarning($"Async references unavailable, async weaving disabled: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Determines whether a method returns Task or Task&lt;T&gt; (i.e. should be woven async-aware).
+        /// </summary>
+        private static bool IsAsyncMethod(MethodDefinition method)
+        {
+            var rt = method.ReturnType;
+            if (rt.FullName == "System.Threading.Tasks.Task")
+                return true;
+            if (rt is GenericInstanceType git &&
+                git.ElementType.FullName == "System.Threading.Tasks.Task`1")
+                return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Returns the result type T for a Task&lt;T&gt; return type, or null for a non-generic Task.
+        /// </summary>
+        private static TypeReference? GetTaskResultType(MethodDefinition method)
+        {
+            if (method.ReturnType is GenericInstanceType git &&
+                git.ElementType.FullName == "System.Threading.Tasks.Task`1")
+                return git.GenericArguments[0];
+            return null;
+        }
+
+        private TypeReference? ResolveType(string fullName)
+        {
+            // 1. Walk the transitive closure of assembly references. The consuming assembly may only
+            //    reference DotNetAspects indirectly (e.g. aspects defined in a separate library), so a
+            //    direct-references-only search would miss the types and skip weaving entirely.
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var found = ResolveTypeFromReferences(ModuleDefinition.AssemblyReferences, fullName, visited);
+            if (found != null)
+                return found;
+
+            // 2. Fallback: discover the DotNetAspects assembly directly from the aspect attributes used in
+            //    this module, then look the type up there. This covers cases where the resolver cannot walk
+            //    the closure (e.g. source-linked / per-assembly aspect definitions).
+            var aspectAssembly = FindDotNetAspectsAssembly();
+            if (aspectAssembly != null)
+            {
+                var fromAspectAsm = FindTypeInAssembly(aspectAssembly, fullName);
+                if (fromAspectAsm != null)
+                    return ModuleDefinition.ImportReference(fromAspectAsm);
+            }
+
+            return null;
+        }
+
+        private TypeReference? ResolveTypeFromReferences(
+            IEnumerable<AssemblyNameReference> references, string fullName, HashSet<string> visited)
+        {
+            foreach (var assemblyRef in references)
+            {
+                if (!visited.Add(assemblyRef.FullName))
+                    continue;
+
+                AssemblyDefinition? assembly;
+                try
+                {
+                    assembly = ModuleDefinition.AssemblyResolver.Resolve(assemblyRef);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (assembly == null)
+                    continue;
+
+                var type = FindTypeInAssembly(assembly, fullName);
+                if (type != null)
+                    return ModuleDefinition.ImportReference(type);
+
+                // Recurse into this assembly's own references (transitive closure).
+                var nested = ResolveTypeFromReferences(
+                    assembly.MainModule.AssemblyReferences, fullName, visited);
+                if (nested != null)
+                    return nested;
+            }
+
+            return null;
+        }
+
+        private static TypeDefinition? FindTypeInAssembly(AssemblyDefinition assembly, string fullName)
+        {
+            try
+            {
+                var type = assembly.MainModule.Types.FirstOrDefault(t => t.FullName == fullName);
+                if (type != null)
+                    return type;
+
+                foreach (var parentType in assembly.MainModule.Types)
+                {
+                    var nested = parentType.NestedTypes.FirstOrDefault(t => t.FullName == fullName);
+                    if (nested != null)
+                        return nested;
                 }
             }
             catch
             {
-                // Ignore resolution errors
+                // Ignore resolution errors for this assembly.
             }
+
             return null;
+        }
+
+        /// <summary>
+        /// Locates the DotNetAspects assembly by walking the inheritance chain of every custom attribute
+        /// applied in this module until a known aspect base type is reached. Returns the assembly that
+        /// declares that base type, or null if no aspect attributes are used.
+        /// </summary>
+        private AssemblyDefinition? FindDotNetAspectsAssembly()
+        {
+            var aspectBaseNames = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "DotNetAspects.Interception.MethodInterceptionAspect",
+                "DotNetAspects.Interception.OnMethodBoundaryAspect",
+                "DotNetAspects.Interception.LocationInterceptionAspect"
+            };
+
+            foreach (var type in ModuleDefinition.GetTypes())
+            {
+                foreach (var attr in EnumerateAspectAttributes(type))
+                {
+                    var current = attr.AttributeType.Resolve();
+                    while (current != null)
+                    {
+                        if (aspectBaseNames.Contains(current.FullName))
+                            return current.Module.Assembly;
+                        current = current.BaseType?.Resolve();
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<CustomAttribute> EnumerateAspectAttributes(TypeDefinition type)
+        {
+            foreach (var attr in type.CustomAttributes)
+                yield return attr;
+            foreach (var method in type.Methods)
+                foreach (var attr in method.CustomAttributes)
+                    yield return attr;
+            foreach (var property in type.Properties)
+                foreach (var attr in property.CustomAttributes)
+                    yield return attr;
         }
 
         private void ProcessType(TypeDefinition type)
@@ -521,6 +714,21 @@ namespace DotNetAspects.Fody
             il.Emit(OpCodes.Newobj, _methodInterceptionArgsCtorWithMethodInfo);
             il.Emit(OpCodes.Stloc, argsVar);
 
+            // === Async path: drive OnInvokeAsync and return the adapted task ===
+            if (IsAsyncMethod(method) &&
+                _asyncInterceptionRunVoid != null && _asyncInterceptionRunResultOpen != null)
+            {
+                var resultType = GetTaskResultType(method);
+                il.Emit(OpCodes.Ldloc, aspectVar);
+                il.Emit(OpCodes.Ldloc, argsVar);
+                if (resultType == null)
+                    il.Emit(OpCodes.Call, _asyncInterceptionRunVoid);
+                else
+                    il.Emit(OpCodes.Call, MakeGenericMethod(_asyncInterceptionRunResultOpen, resultType));
+                il.Emit(OpCodes.Ret);
+                return;
+            }
+
             // === Call aspect.OnInvoke(args) ===
             il.Emit(OpCodes.Ldloc, aspectVar);
             il.Emit(OpCodes.Ldloc, argsVar);
@@ -587,6 +795,13 @@ namespace DotNetAspects.Fody
             method.Body.InitLocals = true;
 
             var il = method.Body.GetILProcessor();
+
+            // Async-aware boundary weaving (Task / Task<T>).
+            if (IsAsyncMethod(method) && _asyncBoundaryRunTask != null && _asyncBoundaryRunTaskOfTOpen != null)
+            {
+                BuildAsyncBoundaryBody(method, originalMethod, aspect, il);
+                return;
+            }
 
             // Local variables
             var aspectVar = new VariableDefinition(ModuleDefinition.ImportReference(aspect.AttributeType));
@@ -775,6 +990,157 @@ namespace DotNetAspects.Fody
                 HandlerStart = finallyStart,
                 HandlerEnd = finallyEnd
             });
+        }
+
+        /// <summary>
+        /// Builds the body of an async (Task / Task&lt;T&gt;) method woven with an OnMethodBoundaryAspect.
+        /// OnEntry runs synchronously (honoring FlowBehavior.Return); the remaining callbacks are applied
+        /// after the awaited task completes via <see cref="Internals.AsyncBoundaryRunner"/>.
+        /// </summary>
+        private void BuildAsyncBoundaryBody(MethodDefinition method, MethodDefinition originalMethod,
+            CustomAttribute aspect, ILProcessor il)
+        {
+            var argsTypeDef = _methodExecutionArgsType!.Resolve();
+
+            var aspectVar = new VariableDefinition(ModuleDefinition.ImportReference(aspect.AttributeType));
+            var argsVar = new VariableDefinition(_methodExecutionArgsType);
+            method.Body.Variables.Add(aspectVar);
+            method.Body.Variables.Add(argsVar);
+
+            // aspect = new Aspect(...);
+            EmitAspectCreation(il, aspect, aspectVar);
+
+            // args = new MethodExecutionArgs();
+            il.Emit(OpCodes.Newobj, _methodExecutionArgsCtor);
+
+            // args.Instance = this / null
+            var instanceProp = argsTypeDef.Properties.FirstOrDefault(p => p.Name == "Instance");
+            if (instanceProp?.SetMethod != null)
+            {
+                il.Emit(OpCodes.Dup);
+                il.Emit(method.IsStatic ? OpCodes.Ldnull : OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(instanceProp.SetMethod));
+            }
+
+            // args.Method = methodof(method)
+            var methodProp = argsTypeDef.Properties.FirstOrDefault(p => p.Name == "Method");
+            if (methodProp?.SetMethod != null)
+            {
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldtoken, method);
+                il.Emit(OpCodes.Ldtoken, method.DeclaringType);
+                il.Emit(OpCodes.Call, _getMethodFromHandle);
+                il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(methodProp.SetMethod));
+            }
+
+            // args.Arguments = new Arguments(new object[] { ... })
+            var argsProp = argsTypeDef.Properties.FirstOrDefault(p => p.Name == "Arguments");
+            if (argsProp?.SetMethod != null)
+            {
+                il.Emit(OpCodes.Dup);
+                EmitArgumentsArray(il, method);
+                il.Emit(OpCodes.Newobj, _argumentsCtor);
+                il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(argsProp.SetMethod));
+            }
+
+            il.Emit(OpCodes.Stloc, argsVar);
+
+            // aspect.OnEntry(args);
+            var onEntryMethod = GetAspectMethod(aspect.AttributeType, "OnEntry");
+            if (onEntryMethod != null)
+            {
+                il.Emit(OpCodes.Ldloc, aspectVar);
+                il.Emit(OpCodes.Ldloc, argsVar);
+                il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(onEntryMethod));
+            }
+
+            var resultType = GetTaskResultType(method);
+
+            // if (args.FlowBehavior == FlowBehavior.Return) return completed task;
+            var flowProp = argsTypeDef.Properties.FirstOrDefault(p => p.Name == "FlowBehavior");
+            var returnValueProp = argsTypeDef.Properties.FirstOrDefault(p => p.Name == "ReturnValue");
+            var proceedLabel = il.Create(OpCodes.Nop);
+            if (flowProp?.GetMethod != null)
+            {
+                il.Emit(OpCodes.Ldloc, argsVar);
+                il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(flowProp.GetMethod));
+                il.Emit(OpCodes.Ldc_I4, 3); // FlowBehavior.Return
+                il.Emit(OpCodes.Bne_Un, proceedLabel);
+
+                // Short-circuit: return a completed task carrying args.ReturnValue.
+                if (resultType == null)
+                {
+                    il.Emit(OpCodes.Call, _taskGetCompleted);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldloc, argsVar);
+                    il.Emit(OpCodes.Callvirt, ModuleDefinition.ImportReference(returnValueProp!.GetMethod));
+                    EmitUnboxOrCast(il, resultType);
+                    il.Emit(OpCodes.Call, MakeGenericMethod(_taskFromResultOpen!, resultType));
+                }
+                il.Emit(OpCodes.Ret);
+            }
+
+            il.Append(proceedLabel);
+
+            // inner = this.Method$Boundary(args...);
+            if (!method.IsStatic)
+                il.Emit(OpCodes.Ldarg_0);
+            for (int i = 0; i < method.Parameters.Count; i++)
+                il.Emit(OpCodes.Ldarg, method.IsStatic ? i : i + 1);
+            il.Emit(OpCodes.Call, originalMethod);
+
+            // return AsyncBoundaryRunner.RunTask[OfT](inner, aspect, args);
+            il.Emit(OpCodes.Ldloc, aspectVar);
+            il.Emit(OpCodes.Ldloc, argsVar);
+            if (resultType == null)
+                il.Emit(OpCodes.Call, _asyncBoundaryRunTask);
+            else
+                il.Emit(OpCodes.Call, MakeGenericMethod(_asyncBoundaryRunTaskOfTOpen!, resultType));
+
+            il.Emit(OpCodes.Ret);
+        }
+
+        /// <summary>
+        /// Emits IL that builds an <c>object[]</c> of the method's boxed arguments and leaves it on the stack.
+        /// </summary>
+        private void EmitArgumentsArray(ILProcessor il, MethodDefinition method)
+        {
+            il.Emit(OpCodes.Ldc_I4, method.Parameters.Count);
+            il.Emit(OpCodes.Newarr, ModuleDefinition.TypeSystem.Object);
+            for (int i = 0; i < method.Parameters.Count; i++)
+            {
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4, i);
+                il.Emit(OpCodes.Ldarg, method.IsStatic ? i : i + 1);
+                if (method.Parameters[i].ParameterType.IsValueType ||
+                    method.Parameters[i].ParameterType.IsGenericParameter)
+                    il.Emit(OpCodes.Box, method.Parameters[i].ParameterType);
+                il.Emit(OpCodes.Stelem_Ref);
+            }
+        }
+
+        /// <summary>
+        /// Emits unbox.any for value types / generic parameters, castclass otherwise.
+        /// </summary>
+        private void EmitUnboxOrCast(ILProcessor il, TypeReference type)
+        {
+            if (type.IsValueType || type.IsGenericParameter)
+                il.Emit(OpCodes.Unbox_Any, type);
+            else
+                il.Emit(OpCodes.Castclass, type);
+        }
+
+        /// <summary>
+        /// Creates a closed generic method reference from an open generic method definition.
+        /// </summary>
+        private MethodReference MakeGenericMethod(MethodReference openMethod, params TypeReference[] arguments)
+        {
+            var instance = new GenericInstanceMethod(openMethod);
+            foreach (var arg in arguments)
+                instance.GenericArguments.Add(arg);
+            return instance;
         }
 
         private MethodDefinition? GetAspectMethod(TypeReference aspectType, string methodName)

@@ -9,7 +9,7 @@
 [![NuGet](https://img.shields.io/nuget/v/DotNetAspects.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/DotNetAspects/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/DotNetAspects.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/DotNetAspects/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
-[![.NET](https://img.shields.io/badge/.NET-Standard%202.0%20%7C%20.NET%208-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-Standard%202.0%20%7C%20.NET%208%20%7C%20.NET%209-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
 
 [Features](#features) | [Quick Start](#quick-start) | [Performance](#performance) | [Migration from PostSharp](#migration-from-postsharp) | [Documentation](#documentation)
 
@@ -33,14 +33,16 @@
 
 ## Features
 
-- **MethodInterceptionAspect** - Full control over method execution with `Proceed()` support
+- **MethodInterceptionAspect** - Full control over method execution with `Proceed()` / `ProceedAsync()` support
 - **OnMethodBoundaryAspect** - Execute code at method entry, success, exception, and exit
 - **LocationInterceptionAspect** - Intercept property and field get/set operations
+- **Async support** - First-class weaving for `Task` / `Task<T>` methods via `OnInvokeAsync`/`ProceedAsync` (interception) and async-correct boundary callbacks
+- **Cross-assembly aspects** - Aspects defined in one assembly can be applied in another, even without a direct reference to DotNetAspects (transitive type resolution)
 - **PostSharp-Compatible API** - Minimal code changes for migration
 - **Compile-Time IL Weaving** - Zero runtime reflection overhead using [Fody](https://github.com/Fody/Fody)
 - **Aspect Instance Caching** - Optimized for high-throughput scenarios
 - **Strong-Named Assembly** - Enterprise-ready with PublicKeyToken `97f295f398ec39b7`
-- **Multi-Targeting** - Supports `netstandard2.0` and `net8.0`
+- **Multi-Targeting** - Supports `netstandard2.0`, `net8.0` and `net9.0`
 
 ---
 
@@ -130,7 +132,7 @@ dotnet run -c Release
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="DotNetAspects" Version="1.4.0" />
+  <PackageReference Include="DotNetAspects" Version="1.5.0" />
   <PackageReference Include="Fody" Version="6.8.2">
     <PrivateAssets>all</PrivateAssets>
     <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
@@ -141,7 +143,7 @@ dotnet run -c Release
 ### CLI
 
 ```bash
-dotnet add package DotNetAspects --version 1.4.0
+dotnet add package DotNetAspects --version 1.5.0
 dotnet add package Fody
 ```
 
@@ -232,6 +234,43 @@ public class NotifyChangedAspect : LocationInterceptionAspect
 }
 ```
 
+### Async Methods
+
+For `async Task` / `async Task<T>` methods, override `OnInvokeAsync` and `await args.ProceedAsync()`:
+
+```csharp
+public class AsyncLoggingAspect : MethodInterceptionAspect
+{
+    public override async Task OnInvokeAsync(MethodInterceptionArgs args)
+    {
+        Console.WriteLine($"Before: {args.Method?.Name}");
+        await args.ProceedAsync();              // awaits the real async work
+        Console.WriteLine($"After: {args.Method?.Name}, Result: {args.ReturnValue}");
+    }
+}
+
+// Usage
+[AsyncLoggingAspect]
+public async Task<string> GreetAsync(string name)
+{
+    await Task.Delay(10);
+    return $"Hello, {name}!";
+}
+```
+
+`OnMethodBoundaryAspect` is async-aware automatically: `OnSuccess`, `OnException` and `OnExit`
+fire **after** the awaited task completes (not when it is returned), and `OnException` captures
+faults from the asynchronous continuation.
+
+> **Note:** For async methods override `OnInvokeAsync` (not the synchronous `OnInvoke`). Supported
+> return types in this release are `Task` and `Task<T>` (`ValueTask` is not yet supported).
+
+### Aspects in a separate assembly
+
+You can define aspects in a dedicated library and apply them in other projects. The weaver resolves
+DotNetAspects types transitively, so the consuming assembly does **not** need a direct reference to
+DotNetAspects — only to the library that defines the aspect.
+
 ### Aspect with Configuration
 
 ```csharp
@@ -318,6 +357,8 @@ DotNetAspects provides a PostSharp-compatible API for easy migration:
 | `ReturnValue` | Get/set the return value |
 | `Proceed()` | Execute original method with current arguments |
 | `Invoke(args)` | Execute original method with custom arguments |
+| `ProceedAsync()` | Await the original async method; unwraps the result into `ReturnValue` |
+| `InvokeAsync(args)` | Await the original async method with custom arguments |
 
 #### MethodExecutionArgs
 
@@ -369,7 +410,9 @@ tests/
 - [x] Constructor argument support
 - [x] Aspect instance caching
 - [x] Performance optimizations for high-throughput
-- [ ] Async method interception
+- [x] Async method interception (`Task` / `Task<T>`)
+- [x] Cross-assembly aspect resolution
+- [ ] `ValueTask` / `ValueTask<T>` support
 - [ ] Assembly-wide aspect application
 - [ ] Aspect multicasting with patterns
 

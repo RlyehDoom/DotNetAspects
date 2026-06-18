@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using DotNetAspects.Args;
 
 namespace DotNetAspects.Interception
@@ -34,6 +35,23 @@ namespace DotNetAspects.Interception
         public virtual void OnInvoke(MethodInterceptionArgs args)
         {
             args.Proceed();
+        }
+
+        /// <summary>
+        /// Called when an asynchronous (<see cref="Task"/> / <see cref="Task{TResult}"/>) target method
+        /// is invoked. Override this method to implement async-correct interception logic.
+        /// </summary>
+        /// <param name="args">Information about the method invocation.</param>
+        /// <returns>A task that completes when interception finishes.</returns>
+        /// <remarks>
+        /// You must <c>await</c> <see cref="MethodInterceptionArgs.ProceedAsync"/> to execute the original
+        /// method, or set <see cref="MethodInterceptionArgs.ReturnValue"/> to return a custom value.
+        /// The default implementation simply awaits <see cref="MethodInterceptionArgs.ProceedAsync"/>.
+        /// For async methods, override this method rather than <see cref="OnInvoke"/>.
+        /// </remarks>
+        public virtual async Task OnInvokeAsync(MethodInterceptionArgs args)
+        {
+            await args.ProceedAsync().ConfigureAwait(false);
         }
     }
 }

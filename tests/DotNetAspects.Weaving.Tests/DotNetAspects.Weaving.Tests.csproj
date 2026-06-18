@@ -23,6 +23,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DotNetAspects\DotNetAspects.csproj" />
+    <!-- Cross-assembly fixtures: aspect defined in one assembly, consumed (and woven) in another. -->
+    <ProjectReference Include="..\DotNetAspects.ExternalAspects\DotNetAspects.ExternalAspects.csproj" />
+    <ProjectReference Include="..\DotNetAspects.Consumer\DotNetAspects.Consumer.csproj" />
     <ProjectReference Include="..\..\src\DotNetAspects.Fody\DotNetAspects.Fody.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <OutputItemType>WeaverFiles</OutputItemType>

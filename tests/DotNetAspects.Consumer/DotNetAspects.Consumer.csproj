@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    IMPORTANT: This project intentionally does NOT reference DotNetAspects directly.
+    It only references the aspect library, which references DotNetAspects transitively.
+    This reproduces the "aspects defined in another assembly" scenario that previously
+    caused the weaver to emit "DotNetAspects types not found. Skipping weaving".
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\DotNetAspects.ExternalAspects\DotNetAspects.ExternalAspects.csproj" />
+  </ItemGroup>
+
+  <!-- Fody weaver configuration -->
+  <ItemGroup>
+    <PackageReference Include="Fody" Version="6.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DotNetAspects.Fody\DotNetAspects.Fody.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <OutputItemType>WeaverFiles</OutputItemType>
+      <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Import Project="..\..\src\DotNetAspects.Fody\build\DotNetAspects.Fody.targets" />
+
+</Project>
