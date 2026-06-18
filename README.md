@@ -258,9 +258,54 @@ public async Task<string> GreetAsync(string name)
 }
 ```
 
-`OnMethodBoundaryAspect` is async-aware automatically: `OnSuccess`, `OnException` and `OnExit`
-fire **after** the awaited task completes (not when it is returned), and `OnException` captures
-faults from the asynchronous continuation.
+**Modifying the result of an async method** — read/replace `args.ReturnValue` after awaiting:
+
+```csharp
+public class DoubleResultAspect : MethodInterceptionAspect
+{
+    public override async Task OnInvokeAsync(MethodInterceptionArgs args)
+    {
+        await args.ProceedAsync();              // ReturnValue is now the unwrapped result
+        if (args.ReturnValue is int value)
+            args.ReturnValue = value * 2;       // caller awaits and receives the doubled value
+    }
+}
+
+[DoubleResultAspect]
+public async Task<int> SquareAsync(int n)
+{
+    await Task.Delay(10);
+    return n * n;                                // SquareAsync(5) => 50
+}
+```
+
+**Async boundary aspects** — `OnMethodBoundaryAspect` is async-aware automatically. `OnEntry` runs
+before the method; `OnSuccess`, `OnException` and `OnExit` fire **after** the awaited task completes
+(not when the `Task` is returned), and `OnException` captures faults from the asynchronous continuation:
+
+```csharp
+public class AsyncTimingAspect : OnMethodBoundaryAspect
+{
+    public override void OnEntry(MethodExecutionArgs args)
+        => args.Tag = Stopwatch.StartNew();
+
+    public override void OnSuccess(MethodExecutionArgs args)
+        => Console.WriteLine($"{args.Method?.Name} returned: {args.ReturnValue}");
+
+    public override void OnException(MethodExecutionArgs args)
+        => Console.WriteLine($"{args.Method?.Name} faulted: {args.Exception?.Message}");
+
+    public override void OnExit(MethodExecutionArgs args)
+        => Console.WriteLine($"{args.Method?.Name} took {((Stopwatch)args.Tag!).ElapsedMilliseconds}ms");
+}
+
+[AsyncTimingAspect]
+public async Task<int> ComputeAsync(int x)
+{
+    await Task.Delay(50);                        // OnSuccess/OnExit fire AFTER this completes
+    return x + 1;
+}
+```
 
 > **Note:** For async methods override `OnInvokeAsync` (not the synchronous `OnInvoke`). Supported
 > return types in this release are `Task` and `Task<T>` (`ValueTask` is not yet supported).
